@@ -117,6 +117,7 @@ use winit::{
     event_loop::EventLoopWindowTarget,
     window::WindowAttributes,
 };
+use winit::platform::windows::WindowBuilderExtWindows;
 
 /// Serialization context holds runtime type information that allows to create unknown types using
 /// their UUIDs and a respective constructors.
@@ -1364,7 +1365,8 @@ impl Engine {
                 .with_theme(params.window_attributes.preferred_theme)
                 .with_content_protected(params.window_attributes.content_protected)
                 .with_window_level(params.window_attributes.window_level)
-                .with_active(params.window_attributes.active);
+                .with_active(params.window_attributes.active)
+                .with_drag_and_drop(false);
 
             let (window, renderer) = Renderer::new(
                 &self.resource_manager,

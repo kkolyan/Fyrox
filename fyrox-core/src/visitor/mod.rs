@@ -68,17 +68,8 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use error::VisitError;
 use field::{Field, FieldKind};
 use fxhash::FxHashMap;
-use std::{
-    any::Any,
-    fmt::{Debug, Formatter},
-    fs::File,
-    hash::Hash,
-    io::{BufWriter, Cursor, Read, Write},
-    ops::{Deref, DerefMut},
-    path::Path,
-    rc::Rc,
-    sync::Arc,
-};
+use std::{any::Any, fmt::{Debug, Formatter}, fs::File, hash::Hash, io::{BufWriter, Cursor, Read, Write}, mem, ops::{Deref, DerefMut}, path::Path, rc::Rc, sync::Arc};
+use std::cell::RefCell;
 
 /// Version of the visitor.
 #[repr(u32)]
@@ -247,7 +238,7 @@ impl Default for VisitorNode {
 /// A RegionGuard is a [Visitor] wrapper that automatically leaves the current region when it is
 /// dropped.
 #[must_use = "the guard must be used"]
-pub struct RegionGuard<'a>(&'a mut Visitor);
+pub struct RegionGuard<'a>(&'a mut Visitor, BreadCrumble);
 
 impl Deref for RegionGuard<'_> {
     type Target = Visitor;
@@ -325,6 +316,37 @@ pub struct Visitor {
     /// Flags that can activate special behavior in some Visit values, such as
     /// [crate::variable::InheritableVariable].
     pub flags: VisitorFlags,
+}
+
+struct BreadCrumble {
+}
+
+thread_local! {
+    static BREADCRUMBLES: RefCell<Vec<&'static str>> = Default::default();
+}
+
+impl BreadCrumble {
+    pub fn new(name: &str) -> Self {
+        let name = unsafe { mem::transmute::<&str, &'static str>(name) };
+        BREADCRUMBLES.with_borrow_mut(|it| {
+            it.push(name);
+        });
+        Self {}
+    }
+
+    fn current_path() -> String {
+        BREADCRUMBLES.with_borrow(|it| {
+            it.join(" => ").to_owned()
+        })
+    }
+}
+
+impl Drop for BreadCrumble {
+    fn drop(&mut self) {
+        BREADCRUMBLES.with_borrow_mut(|it| {
+            it.pop();
+        });
+    }
 }
 
 impl Debug for Visitor {
@@ -562,6 +584,7 @@ impl Visitor {
     /// If not reading, create a node with the given name as a chld of the current node, and return
     /// a visitor for the new node. Return an error if a node with  that name already exists.
     pub fn enter_region(&mut self, name: &str) -> Result<RegionGuard, VisitError> {
+        let bread_crumble = BreadCrumble::new(name);
         let node = self.nodes.borrow(self.current_node);
         if self.reading {
             let mut region = Handle::NONE;
@@ -574,9 +597,9 @@ impl Visitor {
             }
             if region.is_some() {
                 self.current_node = region;
-                Ok(RegionGuard(self))
+                Ok(RegionGuard(self, bread_crumble))
             } else {
-                Err(VisitError::RegionDoesNotExist(name.to_owned()))
+                Err(VisitError::RegionDoesNotExist(BreadCrumble::current_path()))
             }
         } else {
             // Make sure that node does not exists already.
@@ -594,7 +617,7 @@ impl Visitor {
                 .push(node_handle);
             self.current_node = node_handle;
 
-            Ok(RegionGuard(self))
+            Ok(RegionGuard(self, bread_crumble))
         }
     }
 

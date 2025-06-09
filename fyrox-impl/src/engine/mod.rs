@@ -503,7 +503,7 @@ pub struct Engine {
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
-enum MessageTypeId {
+pub(crate) enum MessageTypeId {
     Static(TypeId),
     Dynamic(DynamicTypeId),
 }
@@ -530,6 +530,11 @@ impl ScriptMessageDispatcher {
 
     /// Subscribes a node to receive any message of the given type `type_id`. Subscription is automatically removed
     /// if the node dies.
+    ///
+    /// Do not forget to use alternative "send" methods for this method to work:
+    /// - [`ScriptMessageSender::send_to_target_dynamic`]
+    /// - [`ScriptMessageSender::send_global_dynamic`]
+    /// - [`ScriptMessageSender::send_hierarchical_dynamic`]
     pub fn subscribe_dynamic_to(&mut self, receiver: Handle<Node>, type_id: DynamicTypeId) {
         self.subscribe_internal_to(receiver, MessageTypeId::Dynamic(type_id));
     }
@@ -581,11 +586,8 @@ impl ScriptMessageDispatcher {
         graphics_context: &mut GraphicsContext,
         task_pool: &mut TaskPoolHandler,
     ) {
-        while let Ok(message) = self.message_receiver.try_recv() {
-            let type_id = match message.payload.get_dynamic_type_id() {
-                Some(it) => MessageTypeId::Dynamic(it),
-                None => MessageTypeId::Static(message.payload.deref().type_id()),
-            };
+        while let Ok(mut message) = self.message_receiver.try_recv() {
+            let type_id = message.payload.get_message_type_id();
             let receivers = self.type_groups.get(&type_id);
 
             if receivers.is_none_or(|r| r.is_empty()) {
@@ -596,7 +598,7 @@ impl ScriptMessageDispatcher {
             }
 
             if let Some(receivers) = receivers {
-                let mut payload = message.payload;
+                let payload = message.payload.as_payload_mut();
 
                 match message.kind {
                     ScriptMessageKind::Targeted(target) => {

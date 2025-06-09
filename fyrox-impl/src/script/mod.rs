@@ -37,7 +37,7 @@ use crate::{
     event::Event,
     gui::UiContainer,
     plugin::{Plugin, PluginContainer},
-    scene::{base::NodeScriptMessage, node::Node, Scene},
+    scene::{base::NodeScriptMessage, node::Node, Scene}, script::envelope::{DynamicallyTypedPayloadEnvelope, StaticallyTypedPayloadEnvelope},
 };
 use fyrox_core::reflect::FieldMut;
 use std::{
@@ -47,8 +47,10 @@ use std::{
     str::FromStr,
     sync::mpsc::Sender,
 };
+use crate::script::envelope::ScriptMessagePayloadEnvelope;
 
 pub mod constructor;
+mod envelope;
 
 pub(crate) trait UniversalScriptContext {
     fn node(&mut self) -> Option<&mut Node>;
@@ -66,17 +68,18 @@ pub trait ScriptMessagePayload: Any + Send + Debug {
 
     /// Returns `self` as `&dyn Any`
     fn as_any_mut(&mut self) -> &mut dyn Any;
+}
 
-    /// By default messages are dispatched by [`TypeId::of`]`::<Self>()`.
-    ///
-    /// If this method returns [`Some`], then the message become dynamically typed.
-    /// Dynamically typed messages are dispatched by the returned type identifier instead of static type.
-    /// Subscriptions to dynamically typed messages are managed by
-    /// [`ScriptMessageDispatcher::subscribe_dynamic_to`]
-    /// and [`ScriptMessageDispatcher::unsubscribe_dynamic_from`]
-    fn get_dynamic_type_id(&self) -> Option<DynamicTypeId> {
-        None
-    }
+/// Dynamically typed variant of message's payload
+pub trait DynamicallyTypedScriptMessagePayload: Any + Send + Debug  {
+    /// Returns `self` as `&dyn Any`
+    fn as_any_ref(&self) -> &dyn Any;
+
+    /// Returns `self` as `&dyn Any`
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+
+    /// Returns dynamic type of the content
+    fn get_dynamic_type_id(&self) -> DynamicTypeId;
 }
 
 impl dyn ScriptMessagePayload {
@@ -117,7 +120,7 @@ pub enum RoutingStrategy {
 #[derive(Debug)]
 pub struct ScriptMessage {
     /// Actual message payload.
-    pub payload: Box<dyn ScriptMessagePayload>,
+    pub payload: Box<dyn ScriptMessagePayloadEnvelope>,
     /// Actual script message kind.
     pub kind: ScriptMessageKind,
 }
@@ -170,7 +173,7 @@ impl ScriptMessageSender {
         T: ScriptMessagePayload,
     {
         self.send(ScriptMessage {
-            payload: Box::new(payload),
+            payload: Box::new(StaticallyTypedPayloadEnvelope { payload }),
             kind: ScriptMessageKind::Targeted(target),
         })
     }
@@ -181,7 +184,7 @@ impl ScriptMessageSender {
         T: ScriptMessagePayload,
     {
         self.send(ScriptMessage {
-            payload: Box::new(payload),
+            payload: Box::new(StaticallyTypedPayloadEnvelope { payload }),
             kind: ScriptMessageKind::Global,
         })
     }
@@ -192,7 +195,52 @@ impl ScriptMessageSender {
         T: ScriptMessagePayload,
     {
         self.send(ScriptMessage {
-            payload: Box::new(payload),
+            payload: Box::new(StaticallyTypedPayloadEnvelope { payload }),
+            kind: ScriptMessageKind::Hierarchical { root, routing },
+        })
+    }
+
+    /// Sends a targeted script message with the given payload.
+    ///
+    /// Don't forget to use alternative management methods:
+    /// - [`ScriptMessageDispatcher::subscribe_dynamic_to`]
+    /// - [`ScriptMessageDispatcher::unsubscribe_dynamic_from`]
+    pub fn send_to_target_dynamic<T>(&self, target: Handle<Node>, payload: T)
+    where
+        T: DynamicallyTypedScriptMessagePayload,
+    {
+        self.send(ScriptMessage {
+            payload: Box::new(DynamicallyTypedPayloadEnvelope { payload }),
+            kind: ScriptMessageKind::Targeted(target),
+        })
+    }
+
+    /// Sends a global script message with the given payload.
+    ///
+    /// Don't forget to use alternative management methods:
+    /// - [`ScriptMessageDispatcher::subscribe_dynamic_to`]
+    /// - [`ScriptMessageDispatcher::unsubscribe_dynamic_from`]
+    pub fn send_global_dynamic<T>(&self, payload: T)
+    where
+        T: DynamicallyTypedScriptMessagePayload,
+    {
+        self.send(ScriptMessage {
+            payload: Box::new(DynamicallyTypedPayloadEnvelope { payload }),
+            kind: ScriptMessageKind::Global,
+        })
+    }
+
+    /// Sends a hierarchical script message with the given payload.
+    ///
+    /// Don't forget to use alternative management methods:
+    /// - [`ScriptMessageDispatcher::subscribe_dynamic_to`]
+    /// - [`ScriptMessageDispatcher::unsubscribe_dynamic_from`]
+    pub fn send_hierarchical_dynamic<T>(&self, root: Handle<Node>, routing: RoutingStrategy, payload: T)
+    where
+        T: DynamicallyTypedScriptMessagePayload,
+    {
+        self.send(ScriptMessage {
+            payload: Box::new(DynamicallyTypedPayloadEnvelope { payload }),
             kind: ScriptMessageKind::Hierarchical { root, routing },
         })
     }

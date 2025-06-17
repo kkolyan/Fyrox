@@ -528,6 +528,13 @@ impl GlGraphicsServer {
                             return;
                         };
 
+                        if message.starts_with(
+                            "Program/shader state performance warning: Vertex shader in program ",
+                        ) && message.ends_with(" is being recompiled based on GL state.")
+                        {
+                            return;
+                        }
+
                         let source = if source == glow::DEBUG_SOURCE_API {
                             "Calls to the OpenGL API"
                         } else if source == glow::DEBUG_SOURCE_WINDOW_SYSTEM {
